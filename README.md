@@ -5,11 +5,11 @@ This integration allows you to control Yamaha speakers using Flic buttons and Tw
 ## Features
 
 - **Volume Control**: Precise volume control using Flic Twist controllers
-- **Playback Control**: Pause, resume, and skip tracks using the virtual "skip" device
-- **Multi-Speaker Support**: Control multiple Yamaha speakers simultaneously
+- **Playback Control**: Pause, resume, and skip tracks using configurable playback devices
+- **Multi-Zone Support**: Control multiple zones (main, zone2) on Yamaha receivers
 - **Device-Specific Actions**: Use action messages to control specific devices
 - **Smart Cooldown**: 2.5-second cooldown prevents rapid-fire commands
-- **State Synchronization**: Virtual devices stay in sync with actual speaker states
+- **State Synchronization**: Virtual devices stay in sync with actual speaker states (only after each control action, no recurrent check built in)
 - **Power Control**: Turn devices on/off and toggle power states
 - **Mute Control**: Toggle mute states with smart detection
 
@@ -57,6 +57,12 @@ const YAMAHA_CONFIG = {
             ip: '192.168.0.10', 
             name: 'Bedroom',
             zone: 'zone2'
+        },
+        { 
+            id: 'playback', 
+            ip: '192.168.0.10', 
+            name: 'Playback Control',
+            zone: 'playback'
         }
     ],
     endpoints: {
@@ -71,16 +77,23 @@ const YAMAHA_CONFIG = {
             status: '/YamahaExtendedControl/v1/zone2/getStatus',
             power: '/YamahaExtendedControl/v1/zone2/setPower',
             mute: '/YamahaExtendedControl/v1/zone2/setMute'
+        },
+        playback: {
+            volume: '/YamahaExtendedControl/v1/netusb/setPlayback',
+            status: '/YamahaExtendedControl/v1/netusb/getPlayInfo',
+            power: '/YamahaExtendedControl/v1/netusb/setPlayback',
+            mute: '/YamahaExtendedControl/v1/netusb/setPlayback'
         }
     },
     volumeRanges: {
         main: { min: 0, max: 100 },
-        zone2: { min: 0, max: 100 }
+        zone2: { min: 0, max: 100 },
+        playback: { min: 0, max: 1 }
     }
 };
 ```
 
-**Replace the IP addresses** with your actual Yamaha speaker IP addresses. Each speaker can have multiple zones (main zone and zone2) controlled independently.
+**Replace the IP addresses** with your actual Yamaha speaker IP addresses. Each receiver can have multiple zones (main zone and zone2) controlled independently. The playback device uses netusb commands that are global to the entire device.
 
 ### 3. Upload to Flic Hub Studio
 
@@ -98,12 +111,12 @@ const YAMAHA_CONFIG = {
    - **Type**: Select `Speaker`
    - **Name**: Give it a friendly name (e.g., "Living Room", "Bedroom")
 
-4. **Create Skip Device for Playback Control**:
-   - **Device ID**: `skip`
+4. **Create Playback Control Device**:
+   - **Device ID**: Must match the playback device ID in your configuration (e.g., `playback`)
    - **Type**: Select `Speaker`
    - **Name**: "Playback Control"
 
-**Note**: Each zone (main and zone2) is treated as a separate virtual device, allowing independent control.
+**Note**: Each zone (main and zone2) is treated as a separate virtual device, allowing independent volume control.
 
 ### 5. Set Up Action Messages
 
@@ -137,9 +150,9 @@ Configure these action messages in the Flic app:
 - **Action Messages**: Use "livingroom volume up" or "bedroom volume down"
 - **Automatic Sync**: Virtual devices stay in sync with actual speaker states
 
-### Playback Control (Skip Device)
+### Playback Control
 
-- **Flic Twist Down**: Pause playback on all devices
+- **Flic Twist Down**: Pause playback
 - **Flic Twist Up**: 
   - If paused → Resume playback
   - If playing → Skip to next track
@@ -228,6 +241,11 @@ Small Movement → Ignored (doesn't trigger cooldown)
    - Check script is running without errors
    - Restart the script if needed
 
+5. **Playback Control Not Working**:
+   - Ensure the playback device is configured in YAMAHA_CONFIG
+   - Verify the device ID matches your virtual device configuration
+   - Check that the receiver is on a netusb input (AirPlay, Spotify, etc.)
+
 ### Debug Information
 
 The script provides clean, minimal logging:
@@ -257,7 +275,8 @@ The script automatically discovers volume ranges from your Yamaha device:
 // Automatically discovered from /system/getFeatures
 volumeRanges: {
     main: { min: 0, max: 97 },
-    zone2: { min: 0, max: 90.5 }
+    zone2: { min: 0, max: 90.5 },
+    playback: { min: 0, max: 1 }
 }
 ```
 
@@ -285,8 +304,6 @@ try {
 
 This integration should work with most Yamaha receivers and speakers that support the YXC API, including:
 
-- RX-V series receivers
-- Aventage series receivers
 - MusicCast speakers
 - Other YXC-compatible devices
 
