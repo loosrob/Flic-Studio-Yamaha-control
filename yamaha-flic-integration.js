@@ -26,6 +26,12 @@ const YAMAHA_CONFIG = {
             ip: 'RECEIVER1_IP_ADDRESS', 
             name: 'Name Receiver 1 Zone 2',
             zone: 'zone2'
+        },
+        { 
+            id: 'playback', 
+            ip: 'RECEIVER1_IP_ADDRESS', 
+            name: 'Playback Control',
+            zone: 'playback'
         }
     ],
     // YXC API endpoints for different zones
@@ -41,6 +47,13 @@ const YAMAHA_CONFIG = {
             status: '/YamahaExtendedControl/v1/zone2/getStatus',
             power: '/YamahaExtendedControl/v1/zone2/setPower',
             mute: '/YamahaExtendedControl/v1/zone2/setMute'
+        },
+        playback: {
+            // Playback control uses netusb endpoints
+            volume: '/YamahaExtendedControl/v1/netusb/setPlayback',
+            status: '/YamahaExtendedControl/v1/netusb/getPlayInfo',
+            power: '/YamahaExtendedControl/v1/netusb/setPlayback',
+            mute: '/YamahaExtendedControl/v1/netusb/setPlayback'
         }
     },
     // Volume ranges will be discovered dynamically per zone
@@ -52,6 +65,10 @@ const YAMAHA_CONFIG = {
         zone2: {
             min: -80,  // Default fallback
             max: -10   // Default fallback
+        },
+        playback: {
+            min: 0,    // Playback control uses 0-1 range
+            max: 1     // Playback control uses 0-1 range
         }
     }
 };
@@ -323,8 +340,9 @@ flicApp.on('actionMessage', (message) => {
 // Handle virtual device updates from Flic Twist controllers
 flicApp.on('virtualDeviceUpdate', (metaData, values) => {
     if (metaData.dimmableType === 'Speaker') {
-        if (metaData.virtualDeviceId === 'skip') {
-            handleSkipDeviceUpdate(metaData.virtualDeviceId, values);
+        const speaker = YAMAHA_CONFIG.speakers.find(s => s.id === metaData.virtualDeviceId);
+        if (speaker && speaker.zone === 'playback') {
+            handlePlaybackDeviceUpdate(metaData.virtualDeviceId, values);
         } else {
             handleYamahaSpeakerUpdate(metaData.virtualDeviceId, values);
         }
@@ -637,12 +655,14 @@ async function skipToNextTrack(speaker) {
 }
 
 /**
- * Handle skip device updates for playback control
- * @param {string} deviceId - Virtual device ID (should be 'skip')
+ * Handle playback device updates for playback control
+ * @param {string} deviceId - Virtual device ID
  * @param {Object} values - Values from Flic Twist
  */
-async function handleSkipDeviceUpdate(deviceId, values) {
-    if (deviceId !== 'skip') {
+async function handlePlaybackDeviceUpdate(deviceId, values) {
+    // Find the speaker configuration for this device
+    const speaker = YAMAHA_CONFIG.speakers.find(s => s.id === deviceId);
+    if (!speaker || speaker.zone !== 'playback') {
         return;
     }
     
@@ -660,33 +680,34 @@ async function handleSkipDeviceUpdate(deviceId, values) {
             const remainingCooldown = Math.ceil((PLAYBACK_COOLDOWN_MS - timeSinceLastCommand) / 1000);
             console.log(`⏳ Playback command ignored - cooldown active (${remainingCooldown}s remaining)`);
             
-            // Reset skip device to center position
-            flicApp.virtualDeviceUpdateState('Speaker', 'skip', {
+            // Reset playback device to center position
+            flicApp.virtualDeviceUpdateState('Speaker', deviceId, {
                 volume: 0.5
             });
             return;
         }
         
-        // Apply playback control to all configured devices
-        for (const speaker of YAMAHA_CONFIG.speakers) {
+        // Apply playback control
+        const audioSpeaker = YAMAHA_CONFIG.speakers.find(s => s.zone !== 'playback');
+        if (audioSpeaker) {
             try {
-                const playbackStatus = await getPlaybackStatus(speaker);
+                const playbackStatus = await getPlaybackStatus(audioSpeaker);
                 
                 if (volumeChange < 0) {
                     // Decreasing value = pause playback
                     if (playbackStatus === 'play') {
-                        await pausePlayback(speaker);
+                        await pausePlayback(audioSpeaker);
                     }
                 } else if (volumeChange > 0) {
                     // Increasing value = resume or skip
                     if (playbackStatus === 'pause') {
-                        await resumePlayback(speaker);
+                        await resumePlayback(audioSpeaker);
                     } else if (playbackStatus === 'play') {
-                        await skipToNextTrack(speaker);
+                        await skipToNextTrack(audioSpeaker);
                     }
                 }
             } catch (error) {
-                console.error(`❌ Error handling playback control for ${speaker.name}:`, error);
+                console.error(`❌ Error handling playback control:`, error);
             }
         }
         
@@ -694,8 +715,8 @@ async function handleSkipDeviceUpdate(deviceId, values) {
         lastPlaybackCommandTime = currentTime;
     }
     
-    // Reset skip device to center position
-    flicApp.virtualDeviceUpdateState('Speaker', 'skip', {
+    // Reset playback device to center position
+    flicApp.virtualDeviceUpdateState('Speaker', deviceId, {
         volume: 0.5
     });
 }
@@ -757,6 +778,11 @@ function updateZoneVirtualDeviceStates(zone, volume) {
  * @returns {Promise<number>} - Current volume percentage
  */
 async function getCurrentVolumeAndUpdate(speaker) {
+    // Skip playback devices as they don't have volume
+    if (speaker.zone === 'playback') {
+        return null;
+    }
+    
     try {
         const response = await sendYamahaRequest(speaker.ip, YAMAHA_CONFIG.endpoints[speaker.zone].status, null, speaker.zone);
         
@@ -785,13 +811,16 @@ async function getCurrentVolumeAndUpdate(speaker) {
  */
 async function initializeVirtualDeviceStates() {
     for (const speaker of YAMAHA_CONFIG.speakers) {
-        await getCurrentVolumeAndUpdate(speaker);
+        if (speaker.zone === 'playback') {
+            // Create virtual playback device for playback control
+            flicApp.createVirtualDevice(speaker.id, 'Speaker', {
+                volume: 0.5
+            });
+        } else {
+            // Get current volume for regular speakers
+            await getCurrentVolumeAndUpdate(speaker);
+        }
     }
-    
-    // Create virtual skip device for playback control
-    flicApp.createVirtualDevice('skip', 'Speaker', {
-        volume: 50
-    });
 }
 
 // ============================================================================
@@ -814,7 +843,7 @@ async function initializeYamahaIntegration() {
     console.log('Available features:');
     console.log('- Volume control via Flic buttons');
     console.log('- Volume control via Flic Twist controllers');
-    console.log('- Playback control via Flic Twist (skip device)');
+    console.log('- Playback control via Flic Twist (playback device)');
     console.log('- Multi-speaker synchronization');
     console.log('');
     console.log('Action messages:');
